@@ -19,5 +19,37 @@
   "shortcuts": [
     { "name": "予定を追加", "url": "./?a=new", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
     { "name": "シフト", "url": "./?a=shift", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+  ],
+  "widgets": [
+    {
+      "name": "今日の予定",
+      "short_name": "今日",
+      "description": "今日の予定を日付・祝日といっしょに表示します",
+      "tag": "today",
+      "template": "hibi-today",
+      "ms_ac_template": "widgets/today.json",
+      "data": "widgets/today-data.json",
+      "type": "application/json",
+      "screenshots": [{ "src": "widgets/today-shot.png", "sizes": "300x304", "type": "image/png", "label": "今日の予定ウィジェット" }],
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }],
+      "auth": false,
+      "update": 3600,
+      "multiple": false
+    },
+    {
+      "name": "これからの予定",
+      "short_name": "7日間",
+      "description": "今日から7日間の予定を日ごとに表示します",
+      "tag": "week",
+      "template": "hibi-week",
+      "ms_ac_template": "widgets/week.json",
+      "data": "widgets/week-data.json",
+      "type": "application/json",
+      "screenshots": [{ "src": "widgets/week-shot.png", "sizes": "300x304", "type": "image/png", "label": "これからの予定ウィジェット" }],
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }],
+      "auth": false,
+      "update": 3600,
+      "multiple": false
+    }
   ]
 }

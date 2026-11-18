@@ -321,13 +321,13 @@ async function kvDel(k) { const d = await idb(); return new Promise((res, rej) =
 const DEF_DB = () => ({ v: 1, cals: [{ id: 'main', name: 'マイカレンダー', color: '#527D55', on: true }], events: [], jobs: [], tpls: [], imgs: {} });
 let DB = DEF_DB();
 const SET_KEY = 'cal.settings';
-const DEF_SET = { theme: 'wakaba', ws: 0, hol: true, photoBg: true, fs: 'm', notify: false, defRem: -1, view: 'month' };
+const DEF_SET = { theme: 'wakaba', ws: 0, hol: true, photoBg: true, fs: 'm', notify: false, defRem: -1, view: 'month', push: false };
 let SET = { ...DEF_SET };
 try { const s = JSON.parse(localStorage.getItem(SET_KEY) || '{}'); for (const k in DEF_SET) if (typeof s[k] === typeof DEF_SET[k]) SET[k] = s[k]; } catch (e) { }
-const saveSet = () => { try { localStorage.setItem(SET_KEY, JSON.stringify(SET)); } catch (e) { } };
+const saveSet = () => { try { localStorage.setItem(SET_KEY, JSON.stringify(SET)); } catch (e) { } syDiffSoon(); };
 let saveT = 0;
 function save() { clearTimeout(saveT); saveT = setTimeout(saveNow, 250); }
-function saveNow() { clearTimeout(saveT); return kvSet('data', JSON.stringify(DB)).catch(e => toast('保存できませんでした（' + (e && e.name || 'エラー') + '）')); }
+function saveNow() { clearTimeout(saveT); syDiffSoon(); return kvSet('data', JSON.stringify(DB)).catch(e => toast('保存できませんでした（' + (e && e.name || 'エラー') + '）')); }
 addEventListener('pagehide', () => { if (saveT) saveNow(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden && saveT) saveNow(); });
 function normDB(d) {
@@ -435,7 +435,7 @@ async function loadThumbs(ids) {
   const need = ids.filter(id => !thumbs.has(id));
   if (!need.length) return false;
   await Promise.all(need.map(id => {
-    if (!thumbP.has(id)) thumbP.set(id, (async () => { try { const b = await kvGet('imgt:' + id); thumbs.set(id, b ? URL.createObjectURL(b) : ''); } catch (e) { thumbs.set(id, ''); } thumbP.delete(id); })());
+    if (!thumbP.has(id)) thumbP.set(id, (async () => { try { const b = await getImg(id, true); thumbs.set(id, b ? URL.createObjectURL(b) : ''); } catch (e) { thumbs.set(id, ''); } thumbP.delete(id); })());
     return thumbP.get(id);
   }));
   return true;
@@ -605,7 +605,7 @@ const REMS_A = [[-1, 'なし'], [0, '当日 9:00'], [1440, '前日 9:00']];
 function newEvent(d, startMin, kind) {
   const st = startMin != null ? startMin : Math.min(23 * 60, (new Date().getHours() + 1) * 60);
   const en = Math.min(24 * 60, st + 60);
-  const firstOn = DB.cals.find(c => c.on && c.id !== 'shift') || DB.cals[0];
+  const firstOn = DB.cals.find(c => c.on && c.id !== 'shift' && canEdit(c.id)) || DB.cals.find(c => c.id !== 'shift' && canEdit(c.id)) || DB.cals[0];
   const e = { id: uid(), cal: firstOn.id, t: '', sd: ds(d), ed: ds(en >= 1440 ? d + 1 : d), all: false, st: hm(st), et: hm(en % 1440), memo: '', rep: null, ex: [], rem: SET.defRem, col: '' };
   if (kind === 'shift') { ensureShiftCal(); Object.assign(e, { kind: 'shift', cal: 'shift', job: (DB.jobs[0] || {}).id || '', brk: 0, rem: -1 }); }
   return e;
@@ -625,7 +625,7 @@ function renderEditor() {
     h += `<div class="row"><span class="lab">バイト先</span><div class="chips grow">${DB.jobs.map(j => `<button class="chip" data-a="edPick" data-k="job" data-v="${j.id}" aria-pressed="${e.job === j.id}" style="--c:${j.color}"><span class="sw"></span>${esc(j.name)}</button>`).join('') || '<span class="note">設定がありません（シフトのページで追加できます）</span>'}</div></div>`;
     h += `<div class="row"><span class="lab">休憩</span><input type="number" id="fBrk" min="0" max="600" step="5" value="${+e.brk || 0}" style="width:96px"> 分</div>`;
   } else {
-    h += `<div class="row"><span class="lab">カレンダー</span><div class="chips grow">${DB.cals.filter(c => c.id !== 'shift').map(c => `<button class="chip" data-a="edPick" data-k="cal" data-v="${c.id}" aria-pressed="${e.cal === c.id}" style="--c:${c.color}"><span class="sw"></span>${esc(c.name)}</button>`).join('')}</div></div>`;
+    h += `<div class="row"><span class="lab">カレンダー</span><div class="chips grow">${DB.cals.filter(c => c.id !== 'shift' && (canEdit(c.id) || c.id === e.cal)).map(c => `<button class="chip" data-a="edPick" data-k="cal" data-v="${c.id}" aria-pressed="${e.cal === c.id}" style="--c:${c.color}"><span class="sw"></span>${esc(c.name)}</button>`).join('')}</div></div>`;
     h += `<label class="setrow"><span>終日</span><input type="checkbox" class="tg" id="fAll" ${e.all ? 'checked' : ''}></label>`;
   }
   h += `<div class="row"><span class="lab">開始</span><input type="date" id="fSd" value="${e.sd}" class="grow" aria-label="開始日">${e.all ? '' : `<input type="time" id="fSt" value="${e.st}" aria-label="開始時刻">`}</div>`;
@@ -641,6 +641,7 @@ function renderEditor() {
   h += `<textarea id="fMemo" placeholder="メモ" aria-label="メモ" maxlength="4000">${esc(e.memo || '')}</textarea>`;
   if (repeating) h += `<p class="note">${ICON.repeat} 繰り返しの予定です。変更はすべての回に反映されます。</p>`;
   if (ED.delAsk) h += `<div class="btns"><button class="btn danger" data-a="evDelOne">この日だけ削除</button><button class="btn danger" data-a="evDelAll">すべての回を削除</button><button class="btn" data-a="evDelNo">やめる</button></div>`;
+  else if (!canEdit(e.cal)) h += `<p class="note">「${esc((calOf(e.cal) || {}).name || '')}」は見るだけの共有カレンダーです。変更はできません。</p>`;
   else h += `<div class="btns">${ED.isNew ? '' : `<button class="btn danger" data-a="evDel">${ICON.trash}削除</button>`}${ED.isNew ? '' : `<button class="btn" data-a="evDup">複製</button>`}<button class="btn pri" data-a="evSave">保存</button></div>`;
   openSheet(h, true);
 }
@@ -671,6 +672,7 @@ function fixTimes(e) {
   if (e.rep && e.rep.until && dn(e.rep.until) < dn(e.sd)) e.rep.until = '';
 }
 function saveEditor() {
+  if (ED && ED.e && !canEdit(ED.e.cal)) { toast('見るだけのカレンダーです'); return; }
   readEditor();
   const e = ED.e; fixTimes(e);
   if (!e.t) e.t = e.kind === 'shift' ? ((jobOf(e.job) || {}).name || 'シフト') : '';
@@ -837,7 +839,7 @@ const MEM_IN = 2200, MEM_PER = 3600, MEM_FADE = 900;
 async function playMemories(d) {
   const m = memoriesFor(d); if (!m.ids.length) return;
   const slides = [];
-  for (const it of m.ids.slice(0, 40)) { try { const b = await kvGet('img:' + it.id); if (b) slides.push({ bm: await createImageBitmap(b), y: it.y }); } catch (e) { } }
+  for (const it of m.ids.slice(0, 40)) { try { const b = await getImg(it.id); if (b) slides.push({ bm: await createImageBitmap(b), y: it.y }); } catch (e) { } }
   if (!slides.length) { toast('写真を読み込めませんでした'); return; }
   Object.assign(MEM, { slides, title: m.title, sub: md(d), run: true, t0: performance.now(), pausedAt: 0 });
   $('#mem').hidden = false; $('#memPause').textContent = '一時停止';
@@ -889,7 +891,8 @@ const THEMES = [['wakaba', '若葉', '#527D55'], ['sakura', 'さくら', '#B5566
 function renderSettings() {
   const notif = 'Notification' in window ? Notification.permission : 'none';
   let h = '<div class="wrap">';
-  h += `<div class="card"><h3>${ICON.cal}カレンダー</h3><ul class="joblist">${DB.cals.map(c => `<li style="display:flex;align-items:center;gap:6px"><button class="jrow" data-a="calEdit" data-id="${c.id}" style="--c:${c.color}"><i class="sw"></i><span>${esc(c.name)}<small>${DB.events.filter(e => e.cal === c.id).length}件${c.shared ? ' ・ 共有から追加' : ''}</small></span>${ICON.edit}</button><input type="checkbox" class="tg" data-a="calOn" data-id="${c.id}" ${c.on ? 'checked' : ''} aria-label="${esc(c.name)}を表示"></li>`).join('')}</ul>
+  if (SUPA.url) h += `<div class="card" id="acctCard">${acctCardHtml()}</div>`;
+  h += `<div class="card"><h3>${ICON.cal}カレンダー</h3><ul class="joblist">${DB.cals.map(c => `<li style="display:flex;align-items:center;gap:6px"><button class="jrow" data-a="calEdit" data-id="${c.id}" style="--c:${c.color}"><i class="sw"></i><span>${esc(c.name)}<small>${DB.events.filter(e => e.cal === c.id).length}件${calTag(c)}</small></span>${ICON.edit}</button><input type="checkbox" class="tg" data-a="calOn" data-id="${c.id}" ${c.on ? 'checked' : ''} aria-label="${esc(c.name)}を表示"></li>`).join('')}</ul>
   <div class="btns"><button class="btn sm" data-a="calEdit">${ICON.plus}カレンダーを追加</button></div><p class="note">家族・サークル・バイトなど、グループごとにカレンダーを分けられます。編集画面から共有リンクやファイルで渡せます。</p></div>`;
   h += `<div class="card"><h3>${ICON.palette}見た目</h3><div class="chips" style="margin-bottom:10px">${THEMES.map(([k, n, c]) => `<button class="chip" data-a="set" data-k="theme" data-v="${k}" aria-pressed="${SET.theme === k}" style="--c:${c}"><span class="sw"></span>${n}</button>`).join('')}</div>
   <div class="setrow"><span>週のはじまり</span><div class="chips"><button class="chip" data-a="set" data-k="ws" data-v="0" aria-pressed="${SET.ws === 0}">日曜</button><button class="chip" data-a="set" data-k="ws" data-v="1" aria-pressed="${SET.ws === 1}">月曜</button></div></div>
@@ -897,14 +900,16 @@ function renderSettings() {
   <label class="setrow"><span>祝日を表示<small>2000〜2099年を計算で表示（2027年以降の春分・秋分は予測）</small></span><input type="checkbox" class="tg" data-a="setTg" data-k="hol" ${SET.hol ? 'checked' : ''}></label>
   <label class="setrow"><span>写真を日付の背景にする</span><input type="checkbox" class="tg" data-a="setTg" data-k="photoBg" ${SET.photoBg ? 'checked' : ''}></label></div>`;
   h += `<div class="card"><h3>${ICON.bell}通知</h3><label class="setrow"><span>予定の通知を使う<small>${notif === 'denied' ? 'ブラウザで通知がブロックされています。ブラウザの設定から許可してください。' : notif === 'none' ? 'このブラウザは通知に対応していません。' : 'アプリ（またはタブ）を開いている間に通知します。'}</small></span><input type="checkbox" class="tg" data-a="notify" ${SET.notify && notif === 'granted' ? 'checked' : ''} ${notif === 'none' ? 'disabled' : ''}></label>
+  ${SUPA.url ? `<label class="setrow" id="pushRow">${pushRowHtml()}</label>` : ''}
   <div class="setrow"><span>新しい予定の通知</span><select data-a="defRem" aria-label="新しい予定の通知">${REMS_T.map(([v, l]) => `<option value="${v}" ${SET.defRem === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
   <div class="btns"><button class="btn sm" data-a="testNotify" ${notif === 'granted' ? '' : 'disabled'}>テスト通知</button></div>
-  <p class="note">アプリを閉じている間も確実に知らせたいときは、下の「.icsで書き出す」でスマホ標準のカレンダーに読み込むと、そちらの通知が使えます。</p></div>`;
-  h += `<div class="card"><h3>${ICON.data}データ</h3><p class="note" style="margin:0 0 8px">データはこの端末の中だけに保存されています。機種変更や念のための控えに書き出してください。</p>
+  <p class="note">「予定の通知を使う」はアプリを開いている間の通知です。閉じていても届く通知が使えないときは、下の「.icsで書き出す」でスマホ標準のカレンダーに読み込むと、そちらの通知が使えます。</p></div>`;
+  h += `<div class="card"><h3>${ICON.data}データ</h3><p class="note" style="margin:0 0 8px">${acct ? 'データはこの端末に保存され、ログイン中はサーバーとも同期しています。念のための控えに書き出すこともできます。' : 'データはこの端末の中だけに保存されています。機種変更や念のための控えに書き出してください（ログインすると端末どうしで同期できます）。'}</p>
   <div class="btns" style="margin-top:0"><button class="btn sm" data-a="expJson">${ICON.down}バックアップ（写真なし）</button><button class="btn sm" data-a="expJsonImg">${ICON.down}写真もふくめる</button><button class="btn sm" data-a="expIcs">${ICON.down}.icsで書き出す</button><button class="btn sm" data-a="imp">${ICON.up}読み込む（.json / .ics）</button></div>
   <div class="btns"><button class="btn sm danger" data-a="wipe">すべてのデータを消す</button></div></div>`;
-  h += `<div class="card"><h3>${ICON.info}このアプリについて</h3><p class="note" style="margin:0">ひびカレンダー α版（仮の名前） ・ Ryvona<br>予定・シフトと給料・日付の写真・思い出の再生ができます。通信はせず、すべてこの端末で動きます。</p>
-  <p class="note"><b>これから追加する予定</b>：アカウントと端末間の同期 ・ ほかの人とリアルタイムに共有 ・ アプリを閉じていても届く通知 ・ ホーム画面のウィジェット ・ 写真からAIで予定を読み取る ・ ゲームのイベント予定をAIで自動追加</p>
+  h += `<div class="card"><h3>${ICON.info}このアプリについて</h3><p class="note" style="margin:0">ひびカレンダー α版（仮の名前） ・ Ryvona<br>予定・シフトと給料・日付の写真・思い出の再生ができます。ログイン・同期・共有・閉じていても届く通知を使うときだけサーバーと通信します。</p>
+  <p class="note"><b>これから追加する予定</b>：写真からAIで予定を読み取る ・ ゲームのイベント予定をAIで自動追加</p>
+  <div class="btns"><a class="btn sm" href="./privacy.html" target="_blank" rel="noopener">プライバシーポリシー</a><a class="btn sm" href="./terms.html" target="_blank" rel="noopener">利用規約</a></div>
   <div class="btns"><button class="btn sm" data-a="keys" ${deskOn ? '' : 'hidden'}>キーボード操作</button></div></div>`;
   h += '</div>';
   $('#pgSet').innerHTML = h;
@@ -916,8 +921,9 @@ function calEditor(id) {
   const h = `<h2 id="shT">${id ? 'カレンダーを編集' : 'カレンダーを追加'}</h2>
   <input id="cN" class="tin" type="text" placeholder="名前（例：家族・サークル）" value="${esc(c.name)}" maxlength="30">
   <div class="row"><span class="lab">色</span><div class="sws grow">${PALETTE.map(x => `<button class="swb" data-a="calCol" data-v="${x}" aria-pressed="${c.color === x}" style="--c:${x}" aria-label="色 ${x}"></button>`).join('')}</div></div>
-  ${id ? `<div class="card" style="background:var(--bg);margin-top:10px"><h3>${ICON.share}ほかの人に渡す</h3><p class="note" style="margin:0 0 8px">このカレンダーの予定（${n}件）を、リンクかファイルで渡せます。受け取った人の端末に写しが追加されます（あとからの変更は自動では届きません）。</p><div class="btns" style="margin-top:0"><button class="btn sm" data-a="shareLink" data-id="${c.id}">${ICON.link}共有リンク</button><button class="btn sm" data-a="shareIcs" data-id="${c.id}">${ICON.share}.icsファイル</button></div></div>` : ''}
-  <div class="btns">${id && DB.cals.length > 1 ? `<button class="btn danger" data-a="calDel">${ICON.trash}削除</button>` : ''}<button class="btn pri" data-a="calSave">保存</button></div>`;
+  ${id ? shareHtml(c) : ''}
+  ${id ? `<div class="card" style="background:var(--bg);margin-top:10px"><h3>${ICON.share}ほかの人に渡す（写し）</h3><p class="note" style="margin:0 0 8px">このカレンダーの予定（${n}件）を、リンクかファイルで渡せます。受け取った人の端末に写しが追加されます（あとからの変更は自動では届きません）。</p><div class="btns" style="margin-top:0"><button class="btn sm" data-a="shareLink" data-id="${c.id}">${ICON.link}共有リンク</button><button class="btn sm" data-a="shareIcs" data-id="${c.id}">${ICON.share}.icsファイル</button></div></div>` : ''}
+  <div class="btns">${id && DB.cals.length > 1 && calRole(id) === 'owner' ? `<button class="btn danger" data-a="calDel">${ICON.trash}削除</button>` : ''}${canEdit(c.id) ? '<button class="btn pri" data-a="calSave">保存</button>' : ''}</div>`;
   openSheet(h);
 }
 
@@ -1160,7 +1166,7 @@ const ACT = {
   toastAct: () => { const f = toastFn; toastFn = null; $('#toast').classList.remove('on'); f && f(); },
   addPh: el => { PH_DAY = +el.dataset.d; $('#filePh').click(); },
   delPh: (el, ev) => { ev.stopPropagation(); delPhoto(+el.dataset.d, el.dataset.id); },
-  viewPh: async el => { try { const b = await kvGet('img:' + el.dataset.id); if (!b) return; const img = $('#viewImg'); if (img.src) URL.revokeObjectURL(img.src); img.src = URL.createObjectURL(b); $('#viewer').hidden = false; } catch (e) { } },
+  viewPh: async el => { try { const b = await getImg(el.dataset.id); if (!b) return; const img = $('#viewImg'); if (img.src) URL.revokeObjectURL(img.src); img.src = URL.createObjectURL(b); $('#viewer').hidden = false; } catch (e) { } },
   viewClose: () => { $('#viewer').hidden = true; },
   mem: el => playMemories(+el.dataset.d),
   memClose: () => memClose(),
@@ -1197,8 +1203,8 @@ const ACT = {
   expIcs: () => { download(new Blob([toIcs(DB.events, 'ひびカレンダー')], { type: 'text/calendar' }), 'カレンダー_' + ds(todayDn()) + '.ics'); toast('.icsを書き出しました'); },
   imp: () => $('#fileImp').click(),
   impMerge: () => applyImport(false), impReplace: () => applyImport(true),
-  wipe: () => openSheet(`<h2 id="shT">すべてのデータを消す</h2><p>予定・シフト・写真・カレンダーをこの端末から消します。元に戻せません。</p><div class="btns"><button class="btn" data-a="close">やめる</button><button class="btn pri" data-a="wipeGo" style="background:var(--sun);border-color:var(--sun)">消す</button></div>`),
-  wipeGo: async () => { const ids = Object.values(DB.imgs).flat(); DB = DEF_DB(); await saveNow(); for (const id of ids) { kvDel('img:' + id).catch(() => { }); kvDel('imgt:' + id).catch(() => { }); } closeSheet(); render(); toast('消しました'); },
+  wipe: () => openSheet(`<h2 id="shT">すべてのデータを消す</h2><p>予定・シフト・写真・カレンダーをこの端末から消します。元に戻せません。${acct ? 'ログイン中のときは先にログアウトします（サーバーのデータは消えません。消すときは「サーバーのカレンダーデータを削除」を使ってください）。' : ''}</p><div class="btns"><button class="btn" data-a="close">やめる</button><button class="btn pri" data-a="wipeGo" style="background:var(--sun);border-color:var(--sun)">消す</button></div>`),
+  wipeGo: async () => { if (acct) await acctOut({ quiet: true }); const ids = Object.values(DB.imgs).flat(); DB = DEF_DB(); await saveNow(); for (const id of ids) { kvDel('img:' + id).catch(() => { }); kvDel('imgt:' + id).catch(() => { }); } closeSheet(); render(); toast('消しました'); },
   keys: () => openSheet(`<h2 id="shT">キーボード操作</h2><table class="paytbl">${[['← →', '前へ / 次へ'], ['T', '今日'], ['N', '予定を追加'], ['M / W / D / L', '月 / 週 / 日 / 予定'], ['/', '検索'], ['Esc', '閉じる']].map(([k, v]) => `<tr><td><kbd>${k}</kbd></td><td style="text-align:left">${v}</td></tr>`).join('')}</table>`),
 };
 let PH_DAY = null;
@@ -1255,21 +1261,605 @@ let lastDay = todayDn();
 setInterval(() => { remTick(); const t = todayDn(); if (t !== lastDay) { if (S.sel === lastDay) S.sel = t; if (S.cur === lastDay) S.cur = t; lastDay = t; render(); } else if (S.page === 'cal' && (S.view === 'week' || S.view === 'day')) { const n = $('.now'); if (n) { const d = new Date(); n.style.top = (d.getHours() * 60 + d.getMinutes()) / 60 * HH + 'px'; } } }, 30000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { remTick(); if (todayDn() !== lastDay) { lastDay = todayDn(); render(); } } });
 
+/* ==== account & sync (Supabase) ==== */
+// Optional login (Google / e-mail link) with the same Supabase project as Lufora (Ryvona account).
+// supabase-js is loaded from jsDelivr only when login / sync / sharing / push is used (or a session is stored).
+// Sync is offline-first: IndexedDB (DB) stays the source. Every local save is diffed against SY.base
+// (the last synced JSON per record) and changed keys go into SY.dirty {key: edit time ms}; deletions keep
+// their old JSON in SY.gone and are sent as tombstones. Records: c:<cal> e:<event> j:<job> t:<tpl> i:<day photos> s:set.
+// Last write wins per record (ut = edit time; the server ignores older ut). Server: supabase/schema_calendar.sql.
+// If the tables are not there yet (SQL not run) sync turns itself off quietly (syOff) and the app stays local.
+const SUPA = { url: 'https://isdnvasoyxnnudvreimu.supabase.co', key: 'sb_publishable_ovSzcndKplriLJfsTG_S1w_ko8LB6SG' };
+const SUPA_JS = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js';
+const VAPID_PUB = 'BBzdj14gecbKQrE5jx-0yL3jZuZFlPuMmTIDItGfSzg_W7lq1uYYl96YjXRnOmad7pB7uRK3oiWQlNfmjsGof24';
+const SB_KEY = 'cal.sb', JOIN_KEY = 'cal.join', PHOTO_BUCKET = 'cal-photos', CONTACT = 'lufora.app.info@gmail.com';
+const SET_SYNC = ['theme', 'ws', 'hol', 'photoBg', 'fs', 'defRem', 'view'];
+const errKey = e => String((e && (e.code || '')) + ' ' + (e && (e.message || e.error_description || '')) + ' ' + (e && e.status || '')).toLowerCase();
+const missingTable = e => /pgrst20[25]|42p01|42883|pgrst202|schema cache|does not exist|could not find the (table|function)/.test(errKey(e));
+const netErr = e => !navigator.onLine || (!(e && e.code && /^\d|^P|^PGRST/i.test(String(e.code))) && /fetch|network|load failed|timed? ?out|offline/.test(errKey(e)));
+const okId = s => /^[A-Za-z0-9._-]{1,80}$/.test(s);
+let sbP = null, sbC = null, acct = null, acctBusy = false, acctSent = '', SY = null, syOff = false, syPhotoOff = false, pushPrep = false;
+let syState = '', syMsg = '', syAt = 0, syBusy = false, syAgain = false, syT = 0, syDT = 0, syApplying = false, rtCh = null, JOIN = null, ADEL = false;
+function loadScript(src) { return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.async = true; s.onload = res; s.onerror = () => rej(new Error('load failed: supabase-js')); document.head.appendChild(s); }); }
+function acctFrom(s) { const u = s && s.user; if (!u || u.is_anonymous) return null; const m = u.user_metadata || {}; return { id: u.id, email: u.email || m.email || '', name: m.full_name || m.name || '' }; }
+function acctStored() { try { const v = JSON.parse(localStorage.getItem(SB_KEY)), u = v && (v.user || (v.currentSession && v.currentSession.user)); return !!(u && !u.is_anonymous); } catch (e) { return false; } }
+const authRedirect = () => location.origin + location.pathname.replace(/index\.html$/, '');
+const authParams = () => { const q = new URLSearchParams(location.search), h = new URLSearchParams(location.hash.slice(1)); return k => h.get(k) || q.get(k); };
+const authInUrl = () => { const g = authParams(); return !!(g('access_token') || g('error_code') || g('error_description')); };
+function sb() {
+  if (!sbP) {
+    sbP = (async () => {
+      if (!SUPA.url) throw new Error('not configured');
+      if (!navigator.onLine) throw new Error('offline');
+      if (!window.supabase) await loadScript(SUPA_JS);
+      const c = sbC || (sbC = window.supabase.createClient(SUPA.url, SUPA.key, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: SB_KEY } }));
+      const { data: { session } } = await c.auth.getSession();
+      acct = acctFrom(session);
+      c.auth.onAuthStateChange((ev, s) => {
+        const was = acct && acct.id; acct = acctFrom(s);
+        if (acct && acct.id !== was) setTimeout(() => syStart(), 0);
+        if (!acct && was) { rtStop(); SY = null; }
+        acctUI();
+      });
+      return c;
+    })();
+    sbP.catch(() => { sbP = null; });
+  }
+  return sbP;
+}
+function acctErr(e) {
+  const k = errKey(e);
+  if (!navigator.onLine) return 'オフラインのためログインできません';
+  if (/rate|too many|429/.test(k)) return '短い間に何度も試したため、少し待ってからもう一度お試しください';
+  if (/provider is not enabled|unsupported provider|provider_disabled/.test(k)) return 'このログイン方法はまだ準備中です';
+  if (/load failed: supabase|failed to fetch|network/.test(k)) return 'ログインの準備ができませんでした。通信状態を確認するか、広告ブロックなどをオフにしてもう一度お試しください';
+  if (/redirect/.test(k)) return 'ログイン後の戻り先が登録されていません。' + CONTACT + ' までお知らせください';
+  return 'ログインできませんでした。もう一度お試しください' + (e && (e.code || e.message) ? '（' + String(e.code || e.message).slice(0, 40) + '）' : '');
+}
+const inApp = () => /Line\/|FBAN|FBAV|Instagram|; wv\)|MicroMessenger/i.test(navigator.userAgent);
+// back / swipe from the Google page restores this page from the back-forward cache with the buttons still busy
+addEventListener('pageshow', e => { if (e.persisted && acctBusy) { acctBusy = false; acctUI(); } });
+async function loginGoogle() {
+  if (!navigator.onLine) { toast(acctErr()); return; }
+  acctBusy = true; acctUI();
+  try { await saveNow(); const c = await sb(); const r = await c.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: authRedirect() } }); if (r.error) throw r.error; }
+  catch (e) { console.warn('auth', e); toast(acctErr(e)); acctBusy = false; acctUI(); }
+}
+async function loginMail() {
+  const email = String(($('#lgMail') || {}).value || '').trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast('メールアドレスを確かめてください'); return; }
+  if (!navigator.onLine) { toast(acctErr()); return; }
+  acctBusy = true; acctUI();
+  try { const c = await sb(); const r = await c.auth.signInWithOtp({ email, options: { emailRedirectTo: authRedirect() } }); if (r.error) throw r.error; acctSent = email; toast('ログイン用のメールを送りました'); }
+  catch (e) { console.warn('auth', e); toast(acctErr(e)); }
+  acctBusy = false; acctUI();
+}
+async function authReturn() {
+  const g = authParams(), err = g('error_code') || g('error');
+  let desc = (g('error_description') || '').replace(/\+/g, ' '); try { desc = decodeURIComponent(desc); } catch (e) { }
+  if (err) {
+    history.replaceState(null, '', location.pathname);
+    toast(/otp_expired|expired/i.test(err + desc) ? 'リンクの有効期限が切れています。もう一度送ってください' : /access_denied/i.test(err) ? 'ログインを取り消しました' : 'ログインできませんでした' + (desc || err ? '（' + (desc || err).slice(0, 60) + '）' : ''));
+    return;
+  }
+  try {
+    const c = await sb(); const { data: { session } } = await c.auth.getSession();
+    if (/access_token/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
+    acct = acctFrom(session);
+    if (acct) { toast('ログインしました'); syStart(); } else toast('ログインを完了できませんでした。もう一度お試しください');
+  } catch (e) { console.warn('auth', e); toast(acctErr(e)); }
+}
+async function acctOut(opt = {}) {
+  if (!opt.noSync && acct && SY && !syOff && navigator.onLine) { try { await syncNow(); } catch (e) { } }
+  if (SET.push) await pushOff(true).catch(() => { });
+  rtStop();
+  if (SY) {   // calendars shared by other people are not this device's data: drop the copies
+    const drop = DB.cals.filter(c => { const r = SY.roles[srvCal(c.id)]; return r && r !== 'owner'; }).map(c => c.id);
+    if (drop.length) { DB.cals = DB.cals.filter(c => !drop.includes(c.id)); DB.events = DB.events.filter(e => !drop.includes(e.cal)); if (!DB.cals.length) DB.cals = DEF_DB().cals; }
+  }
+  SY = null; syState = ''; syOff = false; syPhotoOff = false; await kvDel('sync').catch(() => { });
+  try { const c = await sb(); await c.auth.signOut({ scope: 'local' }); } catch (e) { try { localStorage.removeItem(SB_KEY); } catch (x) { } }
+  acct = null; acctSent = ''; saveNow(); render();
+  if (!opt.quiet) toast('ログアウトしました（この端末のデータは残ります）');
+}
+
+/* ---- sync state ---- */
+const SY0 = id => ({ uid: id, base: {}, dirty: {}, gone: {}, since: { e: '', i: '' }, known: [], roles: {}, up: {}, remH: '', remAt: 0, init: false, full: true });
+const srvCal = id => SY && (id === 'main' || id === 'shift') ? id + '.' + SY.uid : id;
+const locCal = id => SY && id === 'main.' + SY.uid ? 'main' : SY && id === 'shift.' + SY.uid ? 'shift' : id;
+const calRole = id => SY && SY.roles[srvCal(id)] || 'owner';
+const canEdit = id => calRole(id) !== 'viewer';
+let sySaveT = 0;
+function sySave() { clearTimeout(sySaveT); sySaveT = setTimeout(() => { if (SY) kvSet('sync', SY).catch(() => { }); }, 300); }
+function recs() {
+  const m = new Map();
+  for (const c of DB.cals) if (okId(srvCal(c.id))) m.set('c:' + srvCal(c.id), JSON.stringify({ name: c.name || '', color: c.color || '', sys: !!c.sys }));
+  for (const e of DB.events) { if (!okId(e.id) || !okId(srvCal(e.cal))) continue; const x = { ...e }; delete x.cal; m.set('e:' + e.id, JSON.stringify([srvCal(e.cal), x])); }
+  for (const j of DB.jobs) if (okId(j.id)) m.set('j:' + j.id, JSON.stringify(j));
+  for (const t of DB.tpls) if (okId(t.id)) m.set('t:' + t.id, JSON.stringify(t));
+  for (const [k, l] of Object.entries(DB.imgs)) if (l && l.length && okId(k)) m.set('i:' + k, JSON.stringify(l));
+  const s = { on: {} }; for (const k of SET_SYNC) s[k] = SET[k]; for (const c of DB.cals) s.on[srvCal(c.id)] = !!c.on;
+  m.set('s:set', JSON.stringify(s));
+  return m;
+}
+// local data present before the first sync: dirty with time 1, so anything already on the server wins
+function syInit() { const cur = recs(); SY.base = Object.fromEntries(cur); SY.dirty = {}; for (const k of cur.keys()) SY.dirty[k] = 1; SY.init = true; SY.full = true; sySave(); }
+function syDiff() {
+  if (!SY || !SY.init) return false;
+  if (syApplying) { syDiffSoon(); return false; }
+  const cur = recs(), now = Date.now(); let ch = false;
+  for (const [k, v] of cur) if (SY.base[k] !== v) { SY.base[k] = v; SY.dirty[k] = now; delete SY.gone[k]; ch = true; }
+  for (const k in SY.base) if (!cur.has(k)) { SY.gone[k] = SY.base[k]; delete SY.base[k]; SY.dirty[k] = now; ch = true; }
+  if (ch) { sySave(); syncSoon(3000); }
+  return ch;
+}
+function syDiffSoon() { if (!SY) return; clearTimeout(syDT); syDT = setTimeout(syDiff, 400); }
+function syncSoon(ms = 1500) { if (!acct || !SY || syOff) return; clearTimeout(syT); syT = setTimeout(syncNow, ms); }
+let syStartP = null;
+function syStart() { if (!syStartP) syStartP = syStart1().finally(() => { syStartP = null; }); return syStartP; }
+async function syStart1() {
+  if (!acct) return;
+  if (!SY || SY.uid !== acct.id) { let v = null; try { v = await kvGet('sync'); } catch (e) { } SY = v && v.uid === acct.id ? v : SY0(acct.id); for (const k of ['gone', 'up', 'roles', 'since']) if (!SY[k]) SY[k] = k === 'since' ? { e: '', i: '' } : {}; if (!SY.init) syInit(); }
+  await syncNow(); joinCheck();
+}
+async function syncNow() {
+  clearTimeout(syT);
+  if (!acct || !SY || syOff) return;
+  if (syBusy) { syAgain = true; return; }
+  if (!navigator.onLine) { syState = 'offline'; acctUI(); return; }
+  syBusy = true; syState = 'busy'; acctUI();
+  try {
+    const c = await sb();
+    syDiff();
+    await syPull(c);
+    await syPush(c);
+    await syPhotos(c);
+    await syRems(c);
+    syState = 'ok'; syAt = Date.now(); syMsg = '';
+    rtStart(c);
+  } catch (e) {
+    if (missingTable(e)) { syOff = true; syState = 'prep'; }
+    else if (netErr(e)) syState = 'offline';
+    else { syState = 'err'; syMsg = String(e && (e.code || e.message) || '').slice(0, 40); console.warn('sync', e); }
+  }
+  sySave(); syBusy = false; acctUI();
+  if (syAgain) { syAgain = false; syncSoon(800); }
+}
+const backISO = s => new Date(Math.max(0, Date.parse(s) - 120000)).toISOString();
+async function pageAll(c, table, cols, f) {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const r = await f(c.from(table).select(cols)).order('updated_at', { ascending: true }).order(table === 'cal_items' ? 'key' : 'id', { ascending: true }).range(from, from + 999);
+    if (r.error) throw r.error;
+    out.push(...r.data); if (r.data.length < 1000) break;
+  }
+  return out;
+}
+async function syPull(c) {
+  const me = SY.uid;
+  let r = await c.from('cal_members').select('cal_id,role').eq('uid', me); if (r.error) throw r.error;
+  const roles = {}; for (const x of r.data) roles[x.cal_id] = x.role;
+  const cr = await c.from('cal_calendars').select('id,data,ut,deleted'); if (cr.error) throw cr.error;
+  // my own calendars vanished without a deletion mark: the server data was deleted (from another device).
+  // Start over and upload this device's data again, rather than deleting it here.
+  if (SY.known.some(id => !roles[id] && SY.roles[id] === 'owner')) { const keep = { remH: '', up: {} }; SY = Object.assign(SY0(SY.uid), keep); syInit(); }
+  const dead = new Set(cr.data.filter(x => x.deleted && roles[x.id]).map(x => x.id));
+  const fresh = Object.keys(roles).filter(id => !SY.known.includes(id)), full = SY.full || !SY.since.e;
+  const evs = await pageAll(c, 'cal_events', 'id,cal_id,data,ut,deleted,updated_at', q => full ? q : q.gte('updated_at', backISO(SY.since.e)));
+  if (fresh.length && !full) evs.push(...await pageAll(c, 'cal_events', 'id,cal_id,data,ut,deleted,updated_at', q => q.in('cal_id', fresh)));
+  const its = await pageAll(c, 'cal_items', 'key,data,ut,deleted,updated_at', q => { q = q.eq('owner', me); return SY.full || !SY.since.i ? q : q.gte('updated_at', backISO(SY.since.i)); });
+  syApplying = true;
+  const applied = new Set(), newer = (k, ut) => SY.dirty[k] > ut;
+  try {
+    for (const row of cr.data) {
+      const k = 'c:' + row.id; if (!roles[row.id] || row.deleted || newer(k, row.ut)) continue;
+      const id = locCal(row.id), d = row.data || {}, cal = calOf(id);
+      if (cal) { cal.name = String(d.name || cal.name).slice(0, 30); if (/^#[0-9a-f]{6}$/i.test(d.color)) cal.color = d.color; if (d.sys) cal.sys = true; }
+      else DB.cals.push({ id, name: String(d.name || 'カレンダー').slice(0, 30), color: /^#[0-9a-f]{6}$/i.test(d.color) ? d.color : PALETTE[1], on: true, ...(d.sys ? { sys: true } : {}) });
+      delete SY.dirty[k]; applied.add(k);
+    }
+    // calendars that are gone: deleted by the owner, or I left / was removed
+    for (const sid of new Set([...SY.known, ...dead])) if (!roles[sid] || (dead.has(sid) && !newer('c:' + sid, (cr.data.find(x => x.id === sid) || {}).ut))) {
+      if (!calOf(locCal(sid)) && !SY.known.includes(sid)) continue;
+      const id = locCal(sid); DB.cals = DB.cals.filter(x => x.id !== id);
+      for (const e of DB.events) if (e.cal === id) { const k = 'e:' + e.id; delete SY.dirty[k]; delete SY.gone[k]; applied.add(k); }
+      DB.events = DB.events.filter(e => e.cal !== id);
+      delete SY.dirty['c:' + sid]; applied.add('c:' + sid);
+    }
+    if (!DB.cals.length) DB.cals = DEF_DB().cals;
+    for (const sid of dead) delete roles[sid];   // deleted by the owner: forget it here (the membership row stays on the server)
+    SY.roles = roles; SY.known = Object.keys(roles);
+    let maxE = SY.since.e, maxI = SY.since.i;
+    const evIdx = new Map(DB.events.map((e, i) => [e.id, i]));
+    for (const row of evs) {
+      if (row.updated_at > maxE) maxE = row.updated_at;
+      const k = 'e:' + row.id; if (!roles[row.cal_id] || newer(k, row.ut)) continue;
+      const i = evIdx.has(row.id) ? evIdx.get(row.id) : -1;
+      if (row.deleted) { if (i >= 0) DB.events[i] = null; }
+      else {
+        const e = { ...(row.data || {}), id: row.id, cal: locCal(row.cal_id) };
+        if (!/^\d{4}-\d\d-\d\d$/.test(e.sd) || !/^\d{4}-\d\d-\d\d$/.test(e.ed)) continue;
+        if (i >= 0) DB.events[i] = e; else { evIdx.set(row.id, DB.events.length); DB.events.push(e); }
+      }
+      delete SY.dirty[k]; delete SY.gone[k]; applied.add(k);
+    }
+    DB.events = DB.events.filter(Boolean);
+    let setCh = false;
+    for (const row of its) {
+      if (row.updated_at > maxI) maxI = row.updated_at;
+      const k = row.key, t = k[0], id = k.slice(2), d = row.data;
+      if (t === 'i' && SY.dirty[k] === 1 && !row.deleted && Array.isArray(d)) {   // first sync: keep both devices' photos of that day
+        DB.imgs[id] = [...new Set([...(DB.imgs[id] || []), ...d.filter(okId)])]; d.forEach(x => { SY.up[x] = 1; }); SY.dirty[k] = Date.now(); continue;
+      }
+      if (newer(k, row.ut)) continue;
+      if (t === 'j' || t === 't') {
+        const arr = t === 'j' ? DB.jobs : DB.tpls, i = arr.findIndex(x => x.id === id);
+        if (row.deleted) { if (i >= 0) arr.splice(i, 1); } else if (d && typeof d === 'object') { const v = { ...d, id }; if (i >= 0) arr[i] = v; else arr.push(v); }
+      } else if (t === 'i') {
+        if (row.deleted || !Array.isArray(d) || !d.length) delete DB.imgs[id]; else { DB.imgs[id] = d.filter(okId); d.forEach(x => { if (!SY.up[x]) SY.up[x] = 1; }); }
+      } else if (t === 's' && id === 'set' && d && !row.deleted) {
+        for (const kk of SET_SYNC) if (typeof d[kk] === typeof DEF_SET[kk]) SET[kk] = d[kk];
+        if (d.on) for (const cal of DB.cals) { const v = d.on[srvCal(cal.id)]; if (typeof v === 'boolean') cal.on = v; }
+        setCh = true;
+      } else continue;
+      delete SY.dirty[k]; delete SY.gone[k]; applied.add(k);
+    }
+    if (DB.jobs.length && !calOf('shift') && DB.events.some(e => e.cal === 'shift')) ensureShiftCal();
+    SY.since.e = maxE; SY.since.i = maxI; SY.full = false;
+    if (applied.size) {
+      const cur = recs();
+      for (const k of applied) { if (cur.has(k)) SY.base[k] = cur.get(k); else delete SY.base[k]; }
+      if (setCh) { try { localStorage.setItem(SET_KEY, JSON.stringify(SET)); } catch (e) { } }
+      for (const [k, v] of thumbs) if (!v) thumbs.delete(k);   // photos from other devices: try again
+      await kvSet('data', JSON.stringify(DB)).catch(() => { });
+      render();
+    }
+  } finally { syApplying = false; }
+}
+async function upsertRows(c, table, list, oc) {
+  const done = x => { if (SY.dirty[x.k] === x.ut) delete SY.dirty[x.k]; delete SY.gone[x.k]; x.ok = true; };
+  for (let i = 0; i < list.length; i += 200) {
+    const part = list.slice(i, i + 200);
+    let r = await c.from(table).upsert(part.map(x => x.row), { onConflict: oc });
+    if (!r.error) { part.forEach(done); continue; }
+    if (missingTable(r.error) || netErr(r.error)) throw r.error;
+    for (const x of part) {
+      r = await c.from(table).upsert(x.row, { onConflict: oc });
+      if (!r.error) done(x);
+      else if (missingTable(r.error) || netErr(r.error)) throw r.error;
+      else { console.warn('sync: rejected', table, r.error.code); delete SY.dirty[x.k]; delete SY.gone[x.k]; SY.full = true; }   // e.g. no right to edit: the server copy wins on the next pull
+    }
+  }
+}
+async function syPush(c) {
+  const keys = Object.keys(SY.dirty); if (!keys.length) return;
+  const cur = recs(), me = SY.uid, calUp = [], calDel = [], evUp = [], items = [], creating = new Set(), removing = new Set();
+  for (const k of keys) if (k[0] === 'c') { const id = k.slice(2); if (cur.has(k)) creating.add(id); else removing.add(id); }
+  const drop = k => { delete SY.dirty[k]; delete SY.gone[k]; };
+  for (const k of keys) {
+    const ut = Math.max(1, SY.dirty[k]), v = cur.get(k), t = k[0], id = k.slice(2);
+    if (t === 'c') { if (v) { if (SY.roles[id] === 'viewer') { drop(k); SY.full = true; continue; } calUp.push({ k, ut: SY.dirty[k], row: { id, data: JSON.parse(v), ut, deleted: false } }); } else calDel.push({ k, id }); }
+    else if (t === 'e') {
+      let cal, row;
+      if (v) { const [cl, x] = JSON.parse(v); cal = cl; row = { id, cal_id: cl, data: x, ut, deleted: false }; }
+      else { const old = SY.gone[k]; if (!old) { drop(k); continue; } cal = JSON.parse(old)[0]; if (removing.has(cal)) { drop(k); continue; } row = { id, cal_id: cal, data: {}, ut, deleted: true }; }
+      const role = SY.roles[cal];
+      if (role === 'viewer' || (!role && !creating.has(cal))) { drop(k); if (role) SY.full = true; continue; }
+      evUp.push({ k, ut: SY.dirty[k], row });
+    } else items.push({ k, ut: SY.dirty[k], row: { owner: me, key: k, data: v ? JSON.parse(v) : {}, ut, deleted: !v } });
+  }
+  if (calUp.length) { await upsertRows(c, 'cal_calendars', calUp, 'id'); for (const x of calUp) if (x.ok) { if (!SY.known.includes(x.row.id)) SY.known.push(x.row.id); if (!SY.roles[x.row.id]) SY.roles[x.row.id] = 'owner'; } }
+  if (evUp.length) await upsertRows(c, 'cal_events', evUp.filter(x => SY.roles[x.row.cal_id]), 'id');
+  if (items.length) await upsertRows(c, 'cal_items', items, 'owner,key');
+  for (const x of calDel) {
+    const role = SY.roles[x.id];
+    if (role) {
+      // owner: deletion mark (members' devices remove it too; the server drops its events); member: leave
+      const r = role === 'owner' ? await c.from('cal_calendars').update({ deleted: true, data: {}, ut: Math.max(1, Date.now()) }).eq('id', x.id) : await c.from('cal_members').delete().eq('cal_id', x.id).eq('uid', me);
+      if (r.error) { if (missingTable(r.error) || netErr(r.error)) throw r.error; console.warn('sync: delete', r.error.code); SY.full = true; }
+      delete SY.roles[x.id]; SY.known = SY.known.filter(s => s !== x.id);
+    }
+    drop(x.k);
+  }
+}
+/* photos per day: private bucket cal-photos, <uid>/<photo id>.jpg and <uid>/<photo id>-t.jpg (owner only, never shared) */
+async function syPhotos(c) {
+  if (syPhotoOff) return;
+  const st = c.storage.from(PHOTO_BUCKET), me = SY.uid, refd = new Set(Object.values(DB.imgs).flat());
+  let n = 0;
+  for (const id of refd) {
+    if (SY.up[id] || n >= 20 || !okId(id)) continue;
+    let full = null, th = null; try { full = await kvGet('img:' + id); th = await kvGet('imgt:' + id); } catch (e) { }
+    if (!full) continue;
+    if (!/jpeg/.test(full.type || '')) { SY.up[id] = -1; continue; }
+    for (const [b, p] of [[full, me + '/' + id + '.jpg'], [th, me + '/' + id + '-t.jpg']]) {
+      if (!b) continue;
+      const r = await st.upload(p, b, { contentType: 'image/jpeg', upsert: true });
+      if (r.error) { const k = errKey(r.error); if (/bucket not found|not found|does not exist/.test(k)) { syPhotoOff = true; return; } if (netErr(r.error)) throw r.error; console.warn('photo upload', r.error.message); SY.up[id] = -1; break; }
+    }
+    if (!SY.up[id]) SY.up[id] = 1; n++;
+  }
+  const gone = Object.keys(SY.up).filter(id => !refd.has(id));
+  const rm = gone.filter(id => SY.up[id] === 1);
+  if (rm.length) { const r = await st.remove(rm.flatMap(id => [me + '/' + id + '.jpg', me + '/' + id + '-t.jpg'])); if (r.error && netErr(r.error)) throw r.error; }
+  for (const id of gone) delete SY.up[id];
+  if (n >= 20) syncSoon(2000);
+}
+async function getImg(id, th) {
+  const k = (th ? 'imgt:' : 'img:') + id; let b = null;
+  try { b = await kvGet(k); } catch (e) { }
+  if (b || !acct || !SY || syOff || syPhotoOff || !navigator.onLine || !okId(id)) return b || null;
+  try {
+    const c = await sb(), r = await c.storage.from(PHOTO_BUCKET).download(SY.uid + '/' + id + (th ? '-t' : '') + '.jpg');
+    if (r.error || !r.data) return null;
+    b = r.data.type ? r.data : new Blob([r.data], { type: 'image/jpeg' });
+    await kvSet(k, b).catch(() => { }); SY.up[id] = 1; return b;
+  } catch (e) { return null; }
+}
+/* realtime: changes in shared calendars arrive without waiting for the next focus */
+function rtStart(c) {
+  if (rtCh || !SY || !c.channel) return;
+  try { const go = () => syncSoon(1500); rtCh = c.channel('cal-' + SY.uid).on('postgres_changes', { event: '*', schema: 'public', table: 'cal_events' }, go).on('postgres_changes', { event: '*', schema: 'public', table: 'cal_calendars' }, go).on('postgres_changes', { event: '*', schema: 'public', table: 'cal_members' }, go).subscribe(); } catch (e) { rtCh = null; }
+}
+function rtStop() { try { if (rtCh && sbC) sbC.removeChannel(rtCh); } catch (e) { } rtCh = null; }
+document.addEventListener('visibilitychange', () => { if (!document.hidden) syncSoon(800); });
+addEventListener('online', () => { if (acct) syncSoon(500); else if (acctStored()) syBoot(); });
+setInterval(() => { if (!document.hidden && acct && SY && !syBusy && Date.now() - syAt > 5 * 60e3) syncNow(); }, 60e3);
+
+/* ==== push (Web Push via the cal-push Edge Function) ==== */
+const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && /^https?:$/.test(location.protocol);
+const strHash = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return (h >>> 0).toString(36) + s.length; };
+function remList() {
+  const now = Date.now(), t = todayDn(), out = [];
+  for (const o of occRange(t - 1, t + 61)) {
+    const e = o.e; if (!(e.rem >= 0)) continue;
+    const at = msAt(o.s, e.all ? 540 : tmin(e.st)) - e.rem * 60000;
+    if (at < now - 60000 || at > now + 61 * DAY) continue;
+    out.push({ id: (e.id + '@' + o.s).slice(0, 120), at, title: String(e.t || '予定').slice(0, 120), body: e.all ? md(o.s) + ' 終日' : md(o.s) + ' ' + e.st + '〜' + e.et, day: ds(o.s) });
+  }
+  return out.sort((a, b) => a.at - b.at).slice(0, 3000);
+}
+async function syRems(c, force) {
+  if (!SET.push || pushPrep) return;
+  const items = remList(), h = strHash(JSON.stringify(items));
+  if (!force && h === SY.remH && Date.now() - SY.remAt < 6 * 3600e3) return;
+  const r = await c.rpc('cal_reminders_put', { p_items: items });
+  if (r.error) { if (missingTable(r.error)) { pushPrep = true; return; } throw r.error; }
+  SY.remH = h; SY.remAt = Date.now();
+}
+async function pushOn() {
+  if (!acct || !SY) { toast('先にログインしてください'); return false; }
+  if (!pushSupported()) { toast('このブラウザは閉じていても届く通知に対応していません'); return false; }
+  if (isIOS() && !standalone()) { toast('iPhone では、ホーム画面に追加したアプリから設定してください'); return false; }
+  try {
+    if (Notification.permission !== 'granted') { const p = await Notification.requestPermission(); if (p !== 'granted') { toast('通知が許可されませんでした'); return false; } SET.notify = true; }
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: unb64u(VAPID_PUB) });
+    const j = sub.toJSON(), c = await sb();
+    const r = await c.rpc('cal_push_save', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_tz: (Intl.DateTimeFormat().resolvedOptions().timeZone || '').slice(0, 60) });
+    if (r.error) { if (missingTable(r.error)) { pushPrep = true; toast('閉じていても届く通知は準備中です'); sub.unsubscribe().catch(() => { }); return false; } throw r.error; }
+    SET.push = true; pushPrep = false; saveSet();
+    await syRems(c, true);
+    toast('アプリを閉じていても通知します');
+    return true;
+  } catch (e) { console.warn('push', e); toast(netErr(e) ? 'オフラインのため設定できませんでした' : '通知を設定できませんでした（' + String(e && (e.code || e.name || e.message) || '').slice(0, 30) + '）'); return false; }
+}
+async function pushOff(quiet) {
+  SET.push = false; saveSet();
+  try {
+    const reg = pushSupported() && await navigator.serviceWorker.getRegistration(), sub = reg && await reg.pushManager.getSubscription();
+    if (sub) {
+      if (acct && navigator.onLine) { try { const c = await sb(); await c.from('cal_push_subs').delete().eq('endpoint', sub.endpoint); } catch (e) { } }
+      await sub.unsubscribe();
+    }
+  } catch (e) { }
+  if (!quiet) toast('閉じているときの通知をオフにしました');
+}
+
+/* ==== sharing (members + invite links) ==== */
+ICON.user = I('<circle cx="12" cy="8.5" r="3.8"/><path d="M4.5 20c1.2-4 4-5.8 7.5-5.8s6.3 1.8 7.5 5.8"/>');
+const ROLE_JA = { owner: '持ち主', editor: '編集できる', viewer: '見るだけ' };
+const appUrl = () => location.origin + location.pathname.replace(/index\.html$/, '');
+function shareHtml(c) {
+  if (!SUPA.url || !c || !calOf(c.id)) return '';
+  let b = '';
+  if (c.sys || c.id === 'shift') b = '<p class="note" style="margin:0">シフトのカレンダーは共有できません（お給料の設定を守るため）。</p>';
+  else if (!acct) b = `<p class="note" style="margin:0 0 8px">ログインすると、ほかの人と同じカレンダーを見たり書きこんだりできます（変更はおたがいに届きます）。</p><div class="btns" style="margin-top:0"><button class="btn sm" data-a="login">ログイン</button></div>`;
+  else if (syOff) b = '<p class="note" style="margin:0">共有はただいま準備中です。</p>';
+  else if (!SY || !SY.roles[srvCal(c.id)]) b = '<p class="note" style="margin:0">同期が終わると共有できます。少し待ってから開き直してください。</p>';
+  else {
+    const own = calRole(c.id) === 'owner';
+    b = `<ul class="joblist" id="memList"><li class="note">メンバーを読みこんでいます…</li></ul>`;
+    if (own) b += `<div class="btns"><button class="btn sm" data-a="invite" data-id="${esc(c.id)}" data-v="editor">${ICON.link}招待リンク（編集もできる）</button><button class="btn sm" data-a="invite" data-id="${esc(c.id)}" data-v="viewer">${ICON.link}招待リンク（見るだけ）</button></div><div id="invOut"></div><p class="note">リンクは14日間使えます。受け取った人はログインして参加します。予定・カレンダーの名前と色が共有され、写真・シフト・お給料の設定は共有されません。持ち主がこのカレンダーを削除すると、メンバー全員から消えます。</p>`;
+    else b += `<p class="note">あなたは「${ROLE_JA[calRole(c.id)]}」メンバーです。写真・シフト・お給料の設定は共有されません。</p><div class="btns"><button class="btn sm danger" data-a="calLeave" data-id="${esc(c.id)}">この共有カレンダーから抜ける</button></div>`;
+    setTimeout(() => loadMembers(c.id), 0);
+  }
+  return `<div class="card" style="background:var(--bg);margin-top:10px"><h3>${ICON.share}メンバーと共有</h3>${b}</div>`;
+}
+async function loadMembers(id) {
+  const el = $('#memList'); if (!el) return;
+  try {
+    const c = await sb(), r = await c.from('cal_members').select('uid,role,name').eq('cal_id', srvCal(id)).order('created_at');
+    if (r.error) throw r.error;
+    const own = calRole(id) === 'owner', el2 = $('#memList'); if (!el2) return;
+    el2.innerHTML = r.data.map(m => `<li class="jrow" style="min-height:48px"><span>${esc(m.name || 'メンバー')}${m.uid === SY.uid ? '（自分）' : ''}<small>${ROLE_JA[m.role] || ''}</small></span>${own && m.role !== 'owner' ? `<button class="chip" data-a="memRole" data-id="${esc(id)}" data-u="${m.uid}" data-v="${m.role === 'editor' ? 'viewer' : 'editor'}">${m.role === 'editor' ? '見るだけにする' : '編集できるようにする'}</button><button class="ib" data-a="memDel" data-id="${esc(id)}" data-u="${m.uid}" aria-label="${esc(m.name || 'メンバー')}を外す">${ICON.x}</button>` : ''}</li>`).join('') || '<li class="note">まだ自分だけです</li>';
+  } catch (e) { const el2 = $('#memList'); if (el2) el2.innerHTML = `<li class="note">${netErr(e) ? 'オフラインのためメンバーを表示できません' : 'メンバーを読みこめませんでした'}</li>`; }
+}
+async function makeInvite(el) {
+  const id = el.dataset.id, role = el.dataset.v === 'viewer' ? 'viewer' : 'editor'; el.disabled = true;
+  try {
+    const c = await sb(), tok = b64u(crypto.getRandomValues(new Uint8Array(24)));
+    const r = await c.from('cal_invites').insert({ token: tok, cal_id: srvCal(id), role }); if (r.error) throw r.error;
+    const url = appUrl() + '#join=' + tok, out = $('#invOut');
+    if (out) out.innerHTML = `<div class="row"><input type="text" id="invUrl" class="grow" readonly value="${esc(url)}" aria-label="招待リンク"><button class="btn sm" data-a="invCopy">コピー</button></div><p class="note" style="margin:0">${role === 'editor' ? '編集もできる' : '見るだけの'}招待リンクです。LINE やメールで送ってください。</p>`;
+    try { await navigator.clipboard.writeText(url); toast('招待リンクをコピーしました'); } catch (e) { }
+  } catch (e) { toast(netErr(e) ? 'オフラインのため招待リンクを作れませんでした' : '招待リンクを作れませんでした'); }
+  el.disabled = false;
+}
+async function joinCheck() {
+  let tok = null; const m = /#join=([A-Za-z0-9_-]{20,64})/.exec(location.hash);
+  if (m) { tok = m[1]; history.replaceState(null, '', location.pathname + location.search); try { localStorage.setItem(JOIN_KEY, tok); } catch (e) { } }
+  else { try { tok = localStorage.getItem(JOIN_KEY); } catch (e) { } }
+  if (!tok || !SUPA.url) return;
+  const clear = () => { try { localStorage.removeItem(JOIN_KEY); } catch (e) { } };
+  if (!acct) { if (m) openSheet(`<h2 id="shT">共有カレンダーへの招待</h2><p>招待されたカレンダーに参加するには、ログインしてください。</p><div id="loginBox">${loginHtml()}</div><div class="btns"><button class="btn" data-a="joinNo">参加しない</button></div>`); return; }
+  if (syOff) { toast('共有はただいま準備中です'); return; }
+  try {
+    const c = await sb(), r = await c.rpc('cal_invite_info', { p_token: tok });
+    if (r.error) throw r.error;
+    if (!r.data) { clear(); toast('この招待リンクは使えません（期限切れか、取り消されています）'); return; }
+    if (r.data.member) { clear(); toast('すでに参加しているカレンダーです'); return; }
+    JOIN = { tok, ...r.data };
+    openSheet(`<h2 id="shT">「${esc(r.data.name || 'カレンダー')}」に参加しますか？</h2><p>${esc(r.data.owner_name || '')}さんのカレンダーです。参加すると、予定を${r.data.role === 'editor' ? '見たり、追加・変更したり' : '見ることが'}できます。</p><p class="note">あなたの表示名（Google の名前。なければ「メンバー」）がほかのメンバーに表示されます。あなたの写真・シフト・ほかのカレンダーは共有されません。</p><div class="btns"><button class="btn" data-a="joinNo">参加しない</button><button class="btn pri" data-a="joinGo">参加する</button></div>`);
+  } catch (e) { if (missingTable(e)) toast('共有はただいま準備中です'); else if (!netErr(e)) { clear(); toast('招待を確かめられませんでした'); } }
+}
+async function joinGo(el) {
+  const j = JOIN; if (!j) return; el.disabled = true;
+  try {
+    const c = await sb(), r = await c.rpc('cal_join', { p_token: j.tok }); if (r.error) throw r.error;
+    try { localStorage.removeItem(JOIN_KEY); } catch (e) { }
+    JOIN = null; closeSheet(); toast('「' + (j.name || 'カレンダー') + '」に参加しました'); await syncNow();
+  } catch (e) { el.disabled = false; toast(netErr(e) ? 'オフラインのため参加できませんでした' : /invite_invalid/.test(errKey(e)) ? 'この招待リンクは使えません' : '参加できませんでした'); }
+}
+// server data deletion (only this app's cal_* rows and photos; the Ryvona account itself stays)
+async function srvDelete(el) {
+  if (!acct || !SY) return; el.disabled = true; ADEL = true;
+  try {
+    const c = await sb(), me = SY.uid;
+    clearTimeout(syT); rtStop();
+    for (let i = 0; i < 200; i++) {
+      const st = c.storage.from(PHOTO_BUCKET), r = await st.list(me, { limit: 100 });
+      if (r.error) { if (/not found|does not exist/i.test(r.error.message || '')) break; throw r.error; }
+      const files = (r.data || []).filter(f => f && f.name && f.id !== null);
+      if (!files.length) break;
+      const rm = await st.remove(files.map(f => me + '/' + f.name)); if (rm.error) throw rm.error;
+      if (!rm.data || !rm.data.length) throw new Error('storage_left');
+    }
+    const r = await c.rpc('cal_delete_my_data'); if (r.error) throw r.error;
+    closeSheet(); await acctOut({ noSync: true, quiet: true }); toast('サーバーのカレンダーデータを削除しました（この端末のデータは残っています）');
+  } catch (e) { el.disabled = false; toast(missingTable(e) ? 'まだサーバーの準備ができていません。' + CONTACT + ' までご連絡ください' : netErr(e) ? 'オフラインのため削除できませんでした' : '削除できませんでした（' + String(e && (e.code || e.message) || '').slice(0, 30) + '）'); }
+  ADEL = false;
+}
+
+/* ==== account UI ==== */
+function loginHtml() {
+  const ia = inApp();
+  return `<div class="btns" style="margin-top:6px"><button class="btn" data-a="loginGoogle" ${acctBusy || ia ? 'disabled' : ''} style="flex:1">Google で続ける</button></div>${ia ? '<p class="note">LINE などのアプリの中のブラウザでは Google でログインできません（Google の決まり）。Safari や Chrome で開くか、メールでログインしてください。</p>' : ''}
+  <div class="row"><input type="email" id="lgMail" class="grow" placeholder="メールアドレス" autocomplete="email" inputmode="email" aria-label="メールアドレス"><button class="btn sm" data-a="loginMail" ${acctBusy ? 'disabled' : ''}>ログイン用のリンクを送る</button></div>
+  ${acctSent ? `<p class="note">${esc(acctSent)} にメールを送りました。メールのリンクを開くとログインできます（迷惑メールのフォルダも見てください）。</p>` : ''}
+  <p class="note">Lufora など Ryvona のアプリと共通のアカウント（Ryvona アカウント）です。続けると、<a href="./terms.html" target="_blank" rel="noopener">利用規約</a>と<a href="./privacy.html" target="_blank" rel="noopener">プライバシーポリシー</a>に同意したことになります。</p>`;
+}
+function syText() {
+  if (syOff || syState === 'prep') return '同期はただいま準備中です（この端末にはふつうに保存されます）';
+  if (!navigator.onLine || syState === 'offline') return 'オフラインです。つながったら自動で同期します';
+  if (syState === 'busy') return '同期しています…';
+  if (syState === 'err') return '同期できませんでした' + (syMsg ? '（' + syMsg + '）' : '') + '。しばらくしてからもう一度お試しください';
+  if (syAt) { const d = new Date(syAt); return '同期しました（' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + '）'; }
+  return 'ほかの端末と同期します';
+}
+function acctCardHtml() {
+  if (!SUPA.url) return '';
+  let h = `<h3>${ICON.user}アカウントと同期</h3>`;
+  if (!acct) h += `<p class="note" style="margin:0 0 8px">ログインすると、ほかの端末と予定・シフト・写真を同期でき、カレンダーをほかの人と共有したり、アプリを閉じていても通知を受け取ったりできます。ログインしなくても、この端末の中でそのまま使えます。</p>${acctStored() && !navigator.onLine ? '<p class="note">オフラインです。つながると同期します。</p>' : ''}<div class="btns" style="margin-top:0"><button class="btn sm pri" data-a="login">ログイン</button></div>`;
+  else {
+    h += `<div class="setrow" style="border-top:0"><span><b>${esc(acct.name || acct.email || 'ログイン中')}</b>${acct.name && acct.email ? `<small>${esc(acct.email)}</small>` : ''}<small>${esc(syText())}</small></span></div>`;
+    h += `<div class="btns" style="margin-top:4px"><button class="btn sm" data-a="syncNow" ${syBusy || syOff ? 'disabled' : ''}>今すぐ同期</button><button class="btn sm" data-a="logout">ログアウト</button></div>`;
+    h += `<div class="btns"><button class="btn sm danger" data-a="srvDel">サーバーのカレンダーデータを削除</button></div>`;
+  }
+  return h;
+}
+function pushRowHtml() {
+  const on = !!SET.push;
+  let note = 'サーバーから予定の時刻にお知らせします（ログインが必要です）。', dis = false;
+  if (!pushSupported()) { note = 'このブラウザは対応していません。'; dis = true; }
+  else if (isIOS() && !standalone()) { note = 'iPhone・iPad では、ホーム画面に追加したアプリ（iOS 16.4 以降）でだけ使えます。共有ボタンから「ホーム画面に追加」してください。'; dis = !on; }
+  else if (!acct) { note = 'ログインすると使えます。'; dis = !on; }
+  else if (pushPrep || syOff) { note = 'ただいま準備中です。'; dis = !on; }
+  else if ('Notification' in window && Notification.permission === 'denied') { note = 'ブラウザで通知がブロックされています。ブラウザの設定から許可してください。'; dis = !on; }
+  return `<span>アプリを閉じていても通知する<small>${note} iPhone はホーム画面に追加したアプリ（iOS 16.4 以降）だけです。</small></span><input type="checkbox" class="tg" data-a="pushOn" ${on ? 'checked' : ''} ${dis ? 'disabled' : ''} aria-label="アプリを閉じていても通知する">`;
+}
+function acctUI() {
+  const a = $('#acctCard'); if (a) a.innerHTML = acctCardHtml();
+  const p = $('#pushRow'); if (p) p.innerHTML = pushRowHtml();
+  const lg = $('#loginBox'); if (lg) { lg.innerHTML = acct ? '<p>ログインしました。</p>' : loginHtml(); if (acct) setTimeout(() => { if ($('#loginBox')) closeSheet(); }, 900); }
+}
+function calTag(c) { const r = SY && SY.roles[srvCal(c.id)]; return r === 'viewer' ? ' ・ 共有（見るだけ）' : r === 'editor' ? ' ・ 共有（編集できる）' : c.shared ? ' ・ 共有から追加' : ''; }
+Object.assign(ACT, {
+  login: () => openSheet(`<h2 id="shT">ログイン</h2><div id="loginBox">${loginHtml()}</div>`),
+  loginGoogle: () => loginGoogle(), loginMail: () => loginMail(),
+  logout: () => openSheet(`<h2 id="shT">ログアウト</h2><p>この端末のログインを終えます。この端末の予定・写真はそのまま残ります（ほかの人から共有されたカレンダーは、この端末から消えます）。</p><div class="btns"><button class="btn" data-a="close">やめる</button><button class="btn pri" data-a="logoutGo">ログアウト</button></div>`),
+  logoutGo: async el => { el.disabled = true; closeSheet(); await acctOut(); },
+  syncNow: () => { if (!syOff) syncNow(); },
+  srvDel: () => openSheet(`<h2 id="shT">サーバーのカレンダーデータを削除</h2><p>サーバーに保存した、このアプリのデータを削除します。</p><ul class="note" style="font-size:.86em"><li>同期した予定・カレンダー・シフトとお給料の設定・アプリの設定</li><li>同期した写真</li><li>閉じていても届く通知の予約と宛先</li><li>あなたが持ち主の共有カレンダー（メンバー全員から消えます）</li><li>ほかの人の共有カレンダーからは抜けます</li></ul><p class="note">この端末の中のデータは残ります。Ryvona アカウント（ログイン）は削除されません（アカウントの削除は Lufora の「アカウント」画面からできます）。削除のあと、この端末はログアウトします。ほかの端末でログインしたままだと、その端末のデータがまた同期されるので、先にほかの端末でもログアウトしてください。元に戻せません。</p><div class="btns"><button class="btn" data-a="close">やめる</button><button class="btn pri" data-a="srvDelGo" style="background:var(--sun);border-color:var(--sun)">削除する</button></div>`),
+  srvDelGo: el => srvDelete(el),
+  invite: el => makeInvite(el),
+  invCopy: async () => { const i = $('#invUrl'); if (!i) return; try { await navigator.clipboard.writeText(i.value); toast('コピーしました'); } catch (e) { i.select(); document.execCommand && document.execCommand('copy'); toast('コピーしました'); } },
+  memDel: async el => { el.disabled = true; try { const c = await sb(), r = await c.from('cal_members').delete().eq('cal_id', srvCal(el.dataset.id)).eq('uid', el.dataset.u); if (r.error) throw r.error; toast('メンバーから外しました'); loadMembers(el.dataset.id); } catch (e) { el.disabled = false; toast('外せませんでした'); } },
+  memRole: async el => { el.disabled = true; try { const c = await sb(), r = await c.rpc('cal_set_role', { p_cal: srvCal(el.dataset.id), p_uid: el.dataset.u, p_role: el.dataset.v }); if (r.error) throw r.error; loadMembers(el.dataset.id); } catch (e) { el.disabled = false; toast('変更できませんでした'); } },
+  calLeave: el => { const id = el.dataset.id, c = calOf(id); if (!c) return; DB.cals = DB.cals.filter(x => x.id !== id); DB.events = DB.events.filter(e => e.cal !== id); if (!DB.cals.length) DB.cals = DEF_DB().cals; save(); closeSheet(); render(); toast('「' + c.name + '」から抜けました'); },
+  joinGo: el => joinGo(el),
+  joinNo: () => { JOIN = null; try { localStorage.removeItem(JOIN_KEY); } catch (e) { } closeSheet(); },
+});
+for (const k of ['evDup', 'evDel', 'evDelOne', 'evDelAll']) { const f = ACT[k]; ACT[k] = (el, ev) => ED && ED.e && !canEdit(ED.e.cal) ? toast('見るだけのカレンダーです') : f(el, ev); }
+{ const f = ACT.calSave; ACT.calSave = (el, ev) => ED && ED.cal && !canEdit(ED.cal.id) ? toast('見るだけのカレンダーです') : f(el, ev); }
+document.addEventListener('change', ev => {
+  const el = ev.target; if (el.dataset.a !== 'pushOn') return;
+  el.disabled = true;
+  (el.checked ? pushOn() : pushOff().then(() => false)).then(ok => { el.checked = !!ok; acctUI(); });
+});
+document.addEventListener('keydown', ev => { if (ev.key === 'Enter' && ev.target.id === 'lgMail' && !ev.isComposing) { ev.preventDefault(); loginMail(); } });
+// open the day a notification is about (sw.js posts this when the app is already open)
+if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', ev => { const d = ev.data; if (d && d.type === 'goDay' && /^\d{4}-\d\d-\d\d$/.test(d.day)) { S.page = 'cal'; S.cur = S.sel = dn(d.day); closeSheet(); render(); } });
+// boot part: only touch the server when it is needed
+async function syBoot() {
+  if (!SUPA.url) return;
+  const inUrl = authInUrl(), join = /#join=/.test(location.hash) || (() => { try { return !!localStorage.getItem(JOIN_KEY); } catch (e) { return false; } })();
+  if (inUrl) { await authReturn(); if (!acct) joinCheck(); return; }
+  if (acctStored()) { if (!navigator.onLine) { acctUI(); return; } try { await sb(); if (acct) await syStart(); else if (join) joinCheck(); } catch (e) { console.warn('sync boot', e); } acctUI(); return; }
+  if (join) joinCheck();
+}
+
 /* ==== boot ==== */
 async function boot() {
   try { const raw = await kvGet('data'); if (raw) DB = normDB(JSON.parse(raw)); } catch (e) { toast('データを読み込めませんでした'); }
   const q = new URLSearchParams(location.search), a = q.get('a');
   if (a) history.replaceState(null, '', location.pathname + location.hash);
   if (a === 'shift') S.page = 'shift';
+  const dq = q.get('d'); if (dq && /^\d{4}-\d\d-\d\d$/.test(dq)) { S.page = 'cal'; S.cur = S.sel = dn(dq); history.replaceState(null, '', location.pathname + location.hash); }
   render();
   if (a === 'new') openEditor(newEvent(S.sel), true);
   checkShareHash();
-  addEventListener('hashchange', checkShareHash);
+  addEventListener('hashchange', () => { checkShareHash(); if (/#join=/.test(location.hash)) joinCheck(); });
+  syBoot();
   remTick();
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
   if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(() => { });
 }
 boot();
+</script>
+<script>
+/* ==== widgets hook (sw-widgets.js / native/android) ==== */
+// After each save, ask the service worker to refresh the Windows 11 widgets, and hand the next
+// 14 days to the Android app's widget when running inside it (window.HibiAndroid bridge).
+(() => {
+  'use strict';
+  const orig = window.saveNow; if (typeof orig !== 'function') return;
+  const ping = () => {
+    try { const c = navigator.serviceWorker && navigator.serviceWorker.controller; if (c) c.postMessage({ type: 'widgets-refresh' }); } catch (e) { }
+    try {
+      if (!(window.HibiAndroid && HibiAndroid.setUpcoming)) return;
+      const t = todayDn(), m = byDay(t, t + 13), out = [];
+      for (const [d, l] of [...m.entries()].sort((a, b) => a[0] - b[0])) for (const o of l) out.push({ d: ds(d), all: !!o.e.all, st: d === o.s ? o.e.st || '' : '', et: d === o.s + durDays(o.e) ? o.e.et || '' : '', t: o.e.t || '（無題）', c: evColor(o.e), h: holName(d) });
+      HibiAndroid.setUpcoming(JSON.stringify({ at: Date.now(), items: out.slice(0, 200) }));
+    } catch (e) { }
+  };
+  window.saveNow = function () { const p = orig.apply(this, arguments); Promise.resolve(p).then(ping, () => { }); return p; };
+  setTimeout(ping, 3000);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) ping(); });
+})();
 </script>
 </body>
 </html>

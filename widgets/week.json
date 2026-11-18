@@ -1,0 +1,42 @@
+{
+  "type": "AdaptiveCard",
+  "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+  "version": "1.5",
+  "body": [
+    { "type": "TextBlock", "text": "${label}", "size": "Small", "isSubtle": true, "spacing": "None" },
+    { "type": "TextBlock", "text": "${range}", "size": "Medium", "weight": "Bolder", "spacing": "None", "wrap": false },
+    {
+      "type": "Container",
+      "$data": "${days}",
+      "spacing": "Medium",
+      "items": [
+        { "type": "TextBlock", "$when": "${!weekend}", "text": "${head}", "size": "Small", "weight": "Bolder", "isSubtle": true, "spacing": "None" },
+        { "type": "TextBlock", "$when": "${weekend}", "text": "${head}", "size": "Small", "weight": "Bolder", "color": "Attention", "spacing": "None" },
+        {
+          "type": "ColumnSet",
+          "$data": "${items}",
+          "spacing": "Small",
+          "columns": [
+            {
+              "type": "Column",
+              "width": "56px",
+              "items": [ { "type": "TextBlock", "text": "${time}", "size": "Small", "color": "Accent", "spacing": "None" } ]
+            },
+            {
+              "type": "Column",
+              "width": "stretch",
+              "items": [ { "type": "TextBlock", "text": "${title}", "wrap": false, "spacing": "None" } ]
+            }
+          ]
+        }
+      ]
+    },
+    { "type": "TextBlock", "$when": "${empty}", "text": "${emptyText}", "isSubtle": true, "wrap": true, "spacing": "Medium" },
+    { "type": "TextBlock", "$when": "${hasMore}", "text": "ほか ${more} 件", "size": "Small", "isSubtle": true, "spacing": "Small" },
+    { "type": "TextBlock", "text": "${updated}", "size": "Small", "isSubtle": true, "horizontalAlignment": "Right", "spacing": "Small" }
+  ],
+  "actions": [
+    { "type": "Action.Execute", "title": "予定を追加", "verb": "add" },
+    { "type": "Action.Execute", "title": "カレンダーを開く", "verb": "open" }
+  ]
+}
