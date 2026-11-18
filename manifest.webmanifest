@@ -1,0 +1,23 @@
+{
+  "id": "./",
+  "name": "ひびカレンダー（α版）",
+  "short_name": "ひびカレンダー",
+  "description": "予定・バイトのシフトと給料・日付の写真をまとめて残せるカレンダー",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#F4EFE4",
+  "theme_color": "#527D55",
+  "categories": ["productivity", "lifestyle"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ],
+  "shortcuts": [
+    { "name": "予定を追加", "url": "./?a=new", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "シフト", "url": "./?a=shift", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}
